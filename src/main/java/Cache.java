@@ -9,4 +9,7 @@ import java.lang.annotation.Target;
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Cache {
+    CacheType type() default CacheType.MEMORY;
+
+    String directory() default "";
 }

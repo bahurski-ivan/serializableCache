@@ -1,7 +1,6 @@
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.*;
 import java.lang.reflect.Proxy;
 
 /**
@@ -9,14 +8,18 @@ import java.lang.reflect.Proxy;
  */
 
 interface TestCalc {
-    @Cache
+    @Cache(type = CacheType.MEMORY_AND_FILE)
     double superHardCalculations(double seed);
 
     double nonCachedCalculations(double seed);
 }
 
+interface Test2 {
+    @Cache(type = CacheType.MEMORY, directory = "serialized_cache_objects1/333/222/555")
+    NotSerializable doSometing(double d);
+}
+
 class TestImpl implements TestCalc {
-    @Cache
     public double superHardCalculations(double seed) {
         for (int i = 0; i < 1000000; ++i)
             seed = seed + Math.sin(i % 180) + Math.pow(seed, Math.cos(seed % 60));
@@ -28,11 +31,32 @@ class TestImpl implements TestCalc {
     }
 }
 
+class NotSerializable {
+
+    private final double result;
+
+    public NotSerializable(double result) {
+        this.result = result;
+    }
+
+    public double getResult() {
+        return result;
+    }
+}
+
+class Test2Impl implements Test2 {
+    private TestImpl calc = new TestImpl();
+
+    public NotSerializable doSometing(double d) {
+        return new NotSerializable(calc.superHardCalculations(d));
+    }
+}
+
 
 public class CacheProxyTest {
 
     @Test
-    public void testIfWorks() throws Exception {
+    public void testSerializable() throws Exception {
         TestCalc test = (TestCalc)
                 Proxy.newProxyInstance(
                         ClassLoader.getSystemClassLoader(),
@@ -47,46 +71,22 @@ public class CacheProxyTest {
         Assert.assertFalse(test.superHardCalculations(120.) == result);
 
         Assert.assertTrue(test.nonCachedCalculations(200.) != result);
+
+        test.superHardCalculations(300.);
+        test.superHardCalculations(400.);
     }
 
-    //@Ignore
     @Test
-    public void testSerialization() throws Exception {
-        TestCalc test = (TestCalc)
+    public void testNotSerializable() throws Exception {
+        Test2 test = (Test2)
                 Proxy.newProxyInstance(
                         ClassLoader.getSystemClassLoader(),
-                        new Class[]{TestCalc.class},
-                        new CacheProxy(new TestImpl())
+                        new Class[]{Test2.class},
+                        new CacheProxy(new Test2Impl())
                 );
 
-        test.superHardCalculations(100.);
-        test.superHardCalculations(102.);
-
-        try (
-                OutputStream file = new FileOutputStream("test.ser");
-                OutputStream buffer = new BufferedOutputStream(file);
-                ObjectOutput output = new ObjectOutputStream(buffer)
-        ) {
-            output.writeObject(test);
-        }
-    }
-
-    //@Ignore
-    @Test
-    public void testDeserialization() throws Exception {
-        Object o;
-
-        try (
-                InputStream file = new FileInputStream("test.ser");
-                InputStream buffer = new BufferedInputStream(file);
-                ObjectInput input = new ObjectInputStream(buffer)
-        ) {
-            o = input.readObject();
-        }
-
-        TestCalc test = TestCalc.class.cast(o);
-
-        test.superHardCalculations(100.);
-        test.superHardCalculations(102.);
+        test.doSometing(100.);
+        test.doSometing(100.);
+        test.doSometing(300.);
     }
 }

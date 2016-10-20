@@ -1,99 +1,213 @@
-import java.io.IOException;
-import java.io.Serializable;
+import java.io.*;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * Created by Ivan on 05/10/16.
  */
-public class CacheProxy implements InvocationHandler, Serializable {
-    private static final long serialVersionUID = 7526471155622776147L;
-
+public class CacheProxy implements InvocationHandler {
     private Object delegate;
-    private Map<Method, Map<List<Object>, Object>> cache = new HashMap<>();
+
+    private Map<Method, CacheContainer> cache = new HashMap<>();
 
     public CacheProxy(Object delegate) {
         this.delegate = delegate;
     }
 
+
+    private static void writeCache(String fileName, Map<List<Object>, Object> cache) throws IOException {
+        try (
+                OutputStream file = new FileOutputStream(fileName);
+                OutputStream buffer = new BufferedOutputStream(file);
+                ObjectOutput output = new ObjectOutputStream(buffer)
+        ) {
+            output.writeObject(cache);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<List<Object>, Object> readCache(String fileName) throws IOException {
+        Object cache;
+
+        try (
+                InputStream file = new FileInputStream(fileName);
+                InputStream buffer = new BufferedInputStream(file);
+                ObjectInput input = new ObjectInputStream(buffer)
+        ) {
+            cache = input.readObject();
+        } catch (ClassNotFoundException | EOFException ignored) {
+            return new HashMap<>();
+        }
+
+        return (Map<List<Object>, Object>) cache;
+    }
+
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-
         Object result;
+        CacheContainer container;
 
-        if (method.isAnnotationPresent(Cache.class)) {
-
-            Map<List<Object>, Object> mm = cache.get(method);
-            List<Object> argList = Arrays.asList(args);
-
-            if (mm == null) {
-                mm = new HashMap<>();
-                cache.put(method, mm);
-            }
-
-            if (!mm.containsKey(argList)) {
+        if (method.isAnnotationPresent(Cache.class) && (container = containerFor(method)) != null) {
+            List<Object> arguments = Arrays.asList(args);
+            if (!container.present(arguments)) {
                 result = method.invoke(delegate, args);
-                mm.put(argList, result);
+                container.put(arguments, result);
             } else
-                result = mm.get(argList);
+                result = container.get(arguments);
+
         } else
             result = method.invoke(delegate, args);
 
         return result;
     }
 
+    private CacheContainer containerFor(Method method) throws IOException {
+        CacheContainer container = cache.get(method);
 
-    private void writeObject(java.io.ObjectOutputStream out) throws IOException {
-        Class<?> clazz = delegate.getClass();
+        if (container == null) {
+            boolean serializable =
+                    Arrays.stream(method.getParameters())
+                            .allMatch(p -> checkClassSerializability(p.getType()))
+                            && checkClassSerializability(method.getReturnType());
 
-        if (Arrays.stream(clazz.getInterfaces()).anyMatch(i -> i == Serializable.class)) {
-            out.writeBoolean(true);
-            out.writeObject(out);
-        } else {
-            out.writeBoolean(false);
-            out.writeObject(clazz);
+            container = CacheContainer.of(method, serializable);
+
+            if (container == null)
+                return null;
+
+            cache.put(method, container);
         }
 
-        out.writeInt(cache.size());
-        for (Map.Entry<Method, Map<List<Object>, Object>> entry : cache.entrySet()) {
-            out.writeUTF(entry.getKey().getName());
-            out.writeObject(entry.getValue());
+        return container;
+    }
+
+    private boolean checkClassSerializability(Class<?> clazz) {
+        return clazz.isPrimitive() || Serializable.class.isAssignableFrom(clazz);
+    }
+
+    private interface CacheContainer {
+
+        static CacheContainer of(Method method, boolean serializable) throws IOException {
+
+            Cache cacheInfo = method.getAnnotation(Cache.class);
+
+            if (!serializable)
+                return cacheInfo.type() == CacheType.FILE ? null : new InMemoryCacheContainer();
+
+            switch (cacheInfo.type()) {
+                case FILE:
+                case MEMORY_AND_FILE:
+
+                    Path path;
+                    String fileName = method.getName() + ".ser";
+
+                    if (cacheInfo.directory().equals(""))
+                        path = Paths.get(System.getProperty("java.io.tmpdir") + '/' + fileName);
+                    else {
+                        path = Paths.get(cacheInfo.directory() + '/' + fileName);
+
+                        if (!Files.exists(path.getParent()))
+                            Files.createDirectories(path.getParent());
+                    }
+
+                    if (!Files.exists(path))
+                        Files.createFile(path);
+
+                    return cacheInfo.type() == CacheType.FILE ? new InFileCacheContainer(path.toString()) :
+                            new InFileAndMemoryCacheContainer(path.toString());
+
+                case MEMORY:
+                    return new InMemoryCacheContainer();
+            }
+
+            return null;
+        }
+
+        Object get(List<Object> arguments) throws IOException;
+
+        boolean present(List<Object> arguments) throws IOException;
+
+        void put(List<Object> arguments, Object result) throws IOException;
+    }
+
+    private static class InMemoryCacheContainer implements CacheContainer {
+
+        private Map<List<Object>, Object> cache = new HashMap<>();
+
+        @Override
+        public Object get(List<Object> arguments) throws IOException {
+            return cache.get(arguments);
+        }
+
+        @Override
+        public boolean present(List<Object> arguments) throws IOException {
+            return cache.containsKey(arguments);
+        }
+
+        @Override
+        public void put(List<Object> arguments, Object result) throws IOException {
+            cache.put(arguments, result);
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private void readObject(java.io.ObjectInputStream in) throws IOException, ClassNotFoundException {
-        Object delegate;
-        Class<?> clazz;
+    private static class InFileCacheContainer implements CacheContainer {
 
-        if (in.readBoolean())
-            delegate = in.readObject();
-        else {
-            try {
-                delegate = ((Class<?>) in.readObject()).newInstance();
-            } catch (IllegalAccessException | InstantiationException e) {
-                throw new IOException(e);
-            }
+        private final String fileName;
+
+        private InFileCacheContainer(String fileName) {
+            this.fileName = fileName;
         }
 
-        this.delegate = delegate;
-        clazz = delegate.getClass();
+        @Override
+        public Object get(List<Object> arguments) throws IOException {
+            Map<List<Object>, Object> cache = readCache(fileName);
+            return cache.get(arguments);
+        }
 
-        int size = in.readInt();
-        cache = new HashMap<>();
+        @Override
+        public boolean present(List<Object> arguments) throws IOException {
+            Map<List<Object>, Object> cache = readCache(fileName);
+            return cache.containsKey(arguments);
+        }
 
-        for (int i = 0; i < size; ++i) {
-            String methodString = in.readUTF();
-            List<Method> found = Arrays.stream(clazz.getMethods())
-                    .filter(m -> m.getName().equals(methodString))
-                    .collect(Collectors.toList());
-            if (found.size() != 1)
-                throw new ClassNotFoundException("method: '" + methodString + "' not found");
-            cache.put(found.get(0), Map.class.cast(in.readObject()));
+        @Override
+        public void put(List<Object> arguments, Object result) throws IOException {
+            Map<List<Object>, Object> cache = readCache(fileName);
+            cache.put(arguments, result);
+            writeCache(fileName, cache);
+        }
+    }
+
+    private static class InFileAndMemoryCacheContainer implements CacheContainer {
+
+        private final String fileName;
+        private Map<List<Object>, Object> cache = new HashMap<>();
+
+        public InFileAndMemoryCacheContainer(String fileName) throws IOException {
+            this.fileName = fileName;
+            cache = readCache(fileName);
+        }
+
+        @Override
+        public Object get(List<Object> arguments) throws IOException {
+            return cache.get(arguments);
+        }
+
+        @Override
+        public boolean present(List<Object> arguments) throws IOException {
+            return cache.containsKey(arguments);
+        }
+
+        @Override
+        public void put(List<Object> arguments, Object result) throws IOException {
+            cache.put(arguments, result);
+            writeCache(fileName, cache);
         }
     }
 }
