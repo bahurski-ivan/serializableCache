@@ -8,7 +8,7 @@ import java.lang.reflect.Proxy;
  */
 
 interface TestCalc {
-    @Cache(type = CacheType.MEMORY_AND_FILE)
+    @Cache(type = CacheType.MEMORY_AND_FILE, directory = "serialized_cache_objects1/333/222/555")
     double superHardCalculations(double seed);
 
     double nonCachedCalculations(double seed);
