@@ -1,3 +1,5 @@
+package ru.sbrf;
+
 import java.io.*;
 import java.lang.reflect.Method;
 import java.nio.file.Files;

@@ -1,3 +1,5 @@
+package ru.sbrf;
+
 import java.io.Serializable;
 import java.util.Arrays;
 
