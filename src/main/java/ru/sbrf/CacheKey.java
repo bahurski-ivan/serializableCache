@@ -6,7 +6,7 @@ import java.util.Arrays;
 /**
  * Created by Ivan on 28/10/2016.
  */
-public class CacheKey implements Serializable {
+class CacheKey implements Serializable {
     private final Object[] arguments;
 
     CacheKey(Object[] arguments) {
@@ -20,9 +20,7 @@ public class CacheKey implements Serializable {
 
         CacheKey cacheKey = (CacheKey) o;
 
-        // Probably incorrect - comparing Object[] arrays with Arrays.equals
-        return Arrays.equals(arguments, cacheKey.arguments);
-
+        return Arrays.deepEquals(arguments, cacheKey.arguments);
     }
 
     @Override

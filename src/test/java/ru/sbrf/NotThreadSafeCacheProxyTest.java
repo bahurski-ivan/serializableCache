@@ -7,9 +7,11 @@ import org.junit.Test;
  * Created by Ivan on 16/10/16.
  */
 public class NotThreadSafeCacheProxyTest {
+    static CacheProxyFactory FACTORY = new CacheProxyFactory(ClassLoader.getSystemClassLoader());
+
     @Test
-    public void testSerializable() throws Exception {
-        Test1 test = CachedObjectFactory.createCached(Test1.class, CacheProxy::notThreadSafeCacheProxy);
+    public void testInFile() throws Exception {
+        Test1 test = FACTORY.wrap(Test1.instance());
 
         double result = test.superHardCalculations(100.);
 
@@ -21,14 +23,22 @@ public class NotThreadSafeCacheProxyTest {
 
         test.superHardCalculations(300.);
         test.superHardCalculations(400.);
+
+        System.out.println(test.getInvokeCount());
+
+        Assert.assertTrue(test.getInvokeCount() <= 4);
     }
 
     @Test
-    public void testNotSerializable() throws Exception {
-        Test2 test = CachedObjectFactory.createCached(Test2.class, CacheProxy::notThreadSafeCacheProxy);
+    public void testInFileAndMemory() throws Exception {
+        Test2 test = FACTORY.wrap(Test2.instance());
 
         test.doSomething(100.);
         test.doSomething(100.);
         test.doSomething(300.);
+
+        Assert.assertTrue(test.getInvokeCount() <= 2);
     }
+
+
 }
