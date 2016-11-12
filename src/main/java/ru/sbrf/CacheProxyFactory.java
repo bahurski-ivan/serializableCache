@@ -41,7 +41,8 @@ public class CacheProxyFactory {
             throw new IllegalArgumentException();
 
         if (interfaces.length == 0) {
-            interfaces = enumerateInterfaces(delegate.getClass());
+            interfaces = interfacesCache.computeIfAbsent(delegate.getClass(),
+                    c -> enumerateInterfaces(delegate.getClass()));
         }
 
         return (T) Proxy.newProxyInstance(classLoader, interfaces, proxyCreator.get());
